@@ -1,8 +1,8 @@
 // server/server.js
 import * as http from 'http'
-import WebSocket from 'ws'
 import dotenv from 'dotenv'
 import jwt from 'jsonwebtoken'
+import { WebSocketServer } from 'ws'
 import { RedisPersistence } from 'y-redis'
 import { setupWSConnection, setPersistence } from './utils.js'
 
@@ -10,7 +10,7 @@ dotenv.config()
 
 const port = process.env.PORT || 1234
 const server = http.createServer()
-const wss = new WebSocket.Server({ noServer: true })
+const wss = new WebSocketServer({ noServer: true })
 
 // Redis persistence setup
 const persistence = new RedisPersistence(process.env.REDIS_URL)
