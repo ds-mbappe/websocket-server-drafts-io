@@ -5,8 +5,9 @@ import dotenv from 'dotenv'
 import jwt from 'jsonwebtoken'
 import { WebSocketServer } from 'ws'
 import * as Y from 'yjs'
-// Remove this import if you don't have the utils.js file
-// import { setupWSConnection, setPersistence } from './utils.js'
+import * as syncProtocol from 'y-protocols/sync'
+import * as awarenessProtocol from 'y-protocols/awareness'
+import { encoding, decoding } from 'lib0'
 
 dotenv.config()
 
@@ -38,6 +39,7 @@ const server = http.createServer((req, res) => {
     res.end('Not Found')
   }
 })
+
 const wss = new WebSocketServer({ noServer: true })
 
 // Parse Redis URL manually for better control
@@ -60,7 +62,7 @@ const redis = new Redis({
   enableReadyCheck: false,
   maxRetriesPerRequest: 3,
   connectTimeout: 10000,
-  lazyConnect: false, // Connect immediately
+  lazyConnect: false,
 })
 
 // Add Redis connection event handlers
@@ -91,14 +93,16 @@ async function testRedisConnection() {
   }
 }
 
-// Call test function
 testRedisConnection()
+
+// Store active documents and their connections
+const docs = new Map()
+const docAwareness = new Map()
 
 // Custom Redis persistence implementation
 class CustomRedisPersistence {
   constructor(redis) {
     this.redis = redis
-    this.docs = new Map() // In-memory cache
   }
 
   async bindState(docName, ydoc) {
@@ -110,13 +114,10 @@ class CustomRedisPersistence {
         Y.applyUpdate(ydoc, uint8Array)
         console.log(`[PERSISTENCE] Document ${docName} loaded from Redis`)
       } else {
-        console.log(`[PERSISTENCE] Document ${docName} not found in Redis`)
+        console.log(`[PERSISTENCE] Document ${docName} not found in Redis, creating new`)
       }
       
-      // Store in memory cache
-      this.docs.set(docName, ydoc)
-      
-      // Listen for updates
+      // Listen for updates and save to Redis
       ydoc.on('update', (update) => {
         this.writeState(docName, ydoc)
       })
@@ -139,38 +140,156 @@ class CustomRedisPersistence {
   }
 }
 
-// Use custom Redis persistence
 const persistence = new CustomRedisPersistence(redis)
 
-// Simple WebSocket connection handler (replacing setupWSConnection)
+// Message types for Y.js protocol
+const messageSync = 0
+const messageAwareness = 1
+
+// Get or create document
+function getYDoc(docName) {
+  let doc = docs.get(docName)
+  if (!doc) {
+    doc = new Y.Doc()
+    docs.set(docName, doc)
+    
+    // Set up persistence
+    persistence.bindState(docName, doc)
+    
+    // Clean up empty documents after 30 seconds
+    setTimeout(() => {
+      if (doc.getMap().size === 0) {
+        docs.delete(docName)
+        console.log(`[CLEANUP] Removed empty document: ${docName}`)
+      }
+    }, 30000)
+  }
+  return doc
+}
+
+// Get or create awareness
+function getAwareness(docName) {
+  let awareness = docAwareness.get(docName)
+  if (!awareness) {
+    awareness = new awarenessProtocol.Awareness(getYDoc(docName))
+    docAwareness.set(docName, awareness)
+  }
+  return awareness
+}
+
+// Proper Y.js WebSocket connection handler
 function setupWSConnection(ws, req, { docName }) {
   console.log(`[WS] New connection for document: ${docName}`)
   
-  // Create or get document
-  const ydoc = new Y.Doc()
+  const doc = getYDoc(docName)
+  const awareness = getAwareness(docName)
   
-  // Bind persistence
-  persistence.bindState(docName, ydoc)
-  
-  // Handle WebSocket messages
+  // Handle incoming messages
   ws.on('message', (data) => {
     try {
-      const update = new Uint8Array(data)
-      Y.applyUpdate(ydoc, update)
+      const message = new Uint8Array(data)
+      const encoder = encoding.createEncoder()
+      const decoder = decoding.createDecoder(message)
+      const messageType = decoding.readVarUint(decoder)
       
-      // Broadcast to other clients (simplified)
-      ws.send(data)
+      switch (messageType) {
+        case messageSync:
+          console.log(`[WS] Sync message received for ${docName}`)
+          encoding.writeVarUint(encoder, messageSync)
+          syncProtocol.readSyncMessage(decoder, encoder, doc, ws)
+          
+          // Send sync response
+          if (encoding.length(encoder) > 1) {
+            ws.send(encoding.toUint8Array(encoder))
+          }
+          break
+          
+        case messageAwareness:
+          console.log(`[WS] Awareness message received for ${docName}`)
+          awarenessProtocol.applyAwarenessUpdate(awareness, decoding.readVarUint8Array(decoder), ws)
+          break
+          
+        default:
+          console.warn(`[WS] Unknown message type: ${messageType}`)
+      }
     } catch (error) {
       console.error('[WS] Error handling message:', error)
     }
   })
   
+  // Send initial sync message
+  const encoder = encoding.createEncoder()
+  encoding.writeVarUint(encoder, messageSync)
+  syncProtocol.writeSyncStep1(encoder, doc)
+  ws.send(encoding.toUint8Array(encoder))
+  
+  // Send awareness states
+  const awarenessEncoder = encoding.createEncoder()
+  encoding.writeVarUint(awarenessEncoder, messageAwareness)
+  encoding.writeVarUint8Array(awarenessEncoder, awarenessProtocol.encodeAwarenessUpdate(awareness, Array.from(awareness.getStates().keys())))
+  ws.send(encoding.toUint8Array(awarenessEncoder))
+  
+  // Handle awareness updates
+  const awarenessChangeHandler = ({ added, updated, removed }) => {
+    const changedClients = added.concat(updated, removed)
+    if (changedClients.length > 0) {
+      const encoder = encoding.createEncoder()
+      encoding.writeVarUint(encoder, messageAwareness)
+      encoding.writeVarUint8Array(encoder, awarenessProtocol.encodeAwarenessUpdate(awareness, changedClients))
+      const message = encoding.toUint8Array(encoder)
+      
+      // Broadcast to all clients
+      wss.clients.forEach(client => {
+        if (client !== ws && client.readyState === 1) {
+          client.send(message)
+        }
+      })
+    }
+  }
+  
+  awareness.on('update', awarenessChangeHandler)
+  
+  // Handle document updates
+  const updateHandler = (update, origin) => {
+    if (origin !== ws) {
+      const encoder = encoding.createEncoder()
+      encoding.writeVarUint(encoder, messageSync)
+      syncProtocol.writeUpdate(encoder, update)
+      const message = encoding.toUint8Array(encoder)
+      
+      // Broadcast to all clients except sender
+      wss.clients.forEach(client => {
+        if (client !== ws && client.readyState === 1) {
+          client.send(message)
+        }
+      })
+    }
+  }
+  
+  doc.on('update', updateHandler)
+  
+  // Handle connection close
   ws.on('close', () => {
     console.log(`[WS] Connection closed for document: ${docName}`)
+    doc.off('update', updateHandler)
+    awareness.off('update', awarenessChangeHandler)
   })
   
   ws.on('error', (error) => {
     console.error('[WS] WebSocket error:', error)
+  })
+  
+  // Set up ping/pong for connection health
+  const pingInterval = setInterval(() => {
+    if (ws.readyState === ws.OPEN) {
+      ws.ping()
+    } else {
+      clearInterval(pingInterval)
+    }
+  }, 30000)
+  
+  ws.on('pong', () => {
+    console.log(`[WS] Pong received from ${docName}`)
   })
 }
 
@@ -193,7 +312,6 @@ server.on('upgrade', (request, socket, head) => {
   try {
     console.log('[UPGRADE] WebSocket upgrade request received')
     console.log('[UPGRADE] Request URL:', request.url)
-    console.log('[UPGRADE] Request headers:', request.headers)
     
     const url = new URL(request.url, `http://${request.headers.host}`)
     const token = url.searchParams.get('token')
@@ -201,17 +319,20 @@ server.on('upgrade', (request, socket, head) => {
     // Extract document name from pathname - remove leading slash
     let docName = url.pathname.slice(1)
     
-    // Handle case where WebsocketProvider appends document name
-    // If URL is /docName/docName, take the first part
+    // Handle case where WebsocketProvider might append document name
     const pathParts = docName.split('/')
-    if (pathParts.length > 1 && pathParts[0] === pathParts[1]) {
+    if (pathParts.length > 1) {
       docName = pathParts[0]
     }
     
-    console.log('[UPGRADE] Full URL:', url.toString())
     console.log('[UPGRADE] Parsed document name:', docName)
     console.log('[UPGRADE] Token provided:', !!token)
-    console.log('[UPGRADE] Token preview:', token ? token.substring(0, 50) + '...' : 'None')
+    
+    if (!docName) {
+      console.log('[UPGRADE] No document name provided, destroying socket')
+      socket.destroy()
+      return
+    }
     
     if (!token) {
       console.log('[UPGRADE] No token provided, destroying socket')
