@@ -4,8 +4,6 @@ import * as http from 'http'
 import dotenv from 'dotenv'
 import jwt from 'jsonwebtoken'
 import { WebSocketServer } from 'ws'
-import { LeveldbPersistence } from 'y-leveldb'
-// Alternative: import { MongodbPersistence } from 'y-mongodb'
 import { setupWSConnection, setPersistence } from './utils.js'
 
 dotenv.config()
