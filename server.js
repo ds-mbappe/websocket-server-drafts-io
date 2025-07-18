@@ -38,12 +38,6 @@ const wss = new WebSocketServer({ noServer: true })
 
 // Parse Redis URL manually for better control
 const redisUrl = new URL(process.env.REDIS_URL)
-console.log('[REDIS] Parsed URL:', {
-  host: redisUrl.hostname,
-  port: redisUrl.port,
-  protocol: redisUrl.protocol,
-  username: redisUrl.username
-})
 
 // Redis client for custom persistence
 const redis = new Redis({
