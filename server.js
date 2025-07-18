@@ -1,4 +1,5 @@
 // server/server.js
+import * as Y from 'yjs'
 import * as http from 'http'
 import dotenv from 'dotenv'
 import jwt from 'jsonwebtoken'
@@ -17,13 +18,14 @@ const persistence = new RedisPersistence(process.env.REDIS_URL)
 
 setPersistence({
   bindState: async (docName, ydoc) => {
-    const persisted = await persistence.getYDoc(docName)
-    const update = Y.encodeStateAsUpdate(persisted)
-    Y.applyUpdate(ydoc, update)
+    // const persistedUpdate = await persistence.getUpdate(docName)
+    // const update = Y.encodeStateAsUpdate(persisted)
+    // Y.applyUpdate(ydoc, update)
 
-    ydoc.on('update', async update => {
-      await persistence.storeUpdate(docName, update)
-    })
+    // ydoc.on('update', async update => {
+    //   await persistence.storeUpdate(docName, update)
+    // })
+    return persistence.bindState(docName, ydoc)
   },
   writeState: async (docName, ydoc) => {
     return true
