@@ -1,11 +1,11 @@
 // server/server.js
-import * as Y from 'yjs'
 import Redis from 'ioredis'
 import * as http from 'http'
 import dotenv from 'dotenv'
 import jwt from 'jsonwebtoken'
 import { WebSocketServer } from 'ws'
-import { RedisPersistence } from 'y-redis'
+import { LeveldbPersistence } from 'y-leveldb'
+// Alternative: import { MongodbPersistence } from 'y-mongodb'
 import { setupWSConnection, setPersistence } from './utils.js'
 
 dotenv.config()
@@ -13,14 +13,36 @@ dotenv.config()
 console.log('[BOOT] REDIS_URL:', process.env.REDIS_URL)
 console.log('[BOOT] AUTH_SECRET:', process.env.AUTH_SECRET)
 console.log('[BOOT] NODE_ENV:', process.env.NODE_ENV)
+console.log('[BOOT] PORT:', process.env.PORT)
 
 const port = process.env.PORT || 1234
 const server = http.createServer()
 const wss = new WebSocketServer({ noServer: true })
 
-// Redis persistence setup
-const redis = new Redis(process.env.REDIS_URL)
+// Redis client for custom persistence
+const redis = new Redis(process.env.REDIS_URL, {
+  retryDelayOnFailover: 100,
+  enableReadyCheck: false,
+  maxRetriesPerRequest: 1,
+  lazyConnect: true,
+  // Handle SSL for rediss:// URLs
+  tls: process.env.REDIS_URL?.startsWith('rediss://') ? {} : undefined,
+})
 
+// Add Redis connection event handlers
+redis.on('connect', () => {
+  console.log('✅ Connected to Redis')
+})
+
+redis.on('error', (error) => {
+  console.error('❌ Redis connection error:', error)
+})
+
+redis.on('ready', () => {
+  console.log('✅ Redis is ready')
+})
+
+// Custom Redis persistence implementation
 class CustomRedisPersistence {
   constructor(redis) {
     this.redis = redis
@@ -50,6 +72,10 @@ class CustomRedisPersistence {
   }
 }
 
+// Alternative: Use LevelDB persistence (recommended)
+// const persistence = new LeveldbPersistence('./yjs-leveldb')
+
+// Use custom Redis persistence
 const persistence = new CustomRedisPersistence(redis)
 
 setPersistence({
@@ -73,8 +99,8 @@ server.on('upgrade', (request, socket, head) => {
   const url = new URL(request.url, `http://${request.headers.host}`)
   const token = url.searchParams.get('token')
   const docName = url.pathname.slice(1)
-
   const user = authenticate(token)
+
   if (!user) {
     socket.destroy()
     return
