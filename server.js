@@ -1,4 +1,5 @@
 // server/server.js
+import * as Y from 'yjs'
 import Redis from 'ioredis'
 import * as http from 'http'
 import dotenv from 'dotenv'
@@ -19,14 +20,44 @@ const wss = new WebSocketServer({ noServer: true })
 
 // Redis persistence setup
 const redis = new Redis(process.env.REDIS_URL)
-const persistence = new RedisPersistence({ redis })
+
+class CustomRedisPersistence {
+  constructor(redis) {
+    this.redis = redis
+  }
+
+  async bindState(docName, ydoc) {
+    try {
+      const data = await this.redis.get(`yjs:${docName}`)
+      if (data) {
+        const uint8Array = new Uint8Array(JSON.parse(data))
+        Y.applyUpdate(ydoc, uint8Array)
+      }
+    } catch (error) {
+      console.error('Error loading document:', error)
+    }
+  }
+
+  async writeState(docName, ydoc) {
+    try {
+      const update = Y.encodeStateAsUpdate(ydoc)
+      await this.redis.set(`yjs:${docName}`, JSON.stringify(Array.from(update)))
+      return true
+    } catch (error) {
+      console.error('Error saving document:', error)
+      return false
+    }
+  }
+}
+
+const persistence = new CustomRedisPersistence(redis)
 
 setPersistence({
   bindState: async (docName, ydoc) => {
     return persistence.bindState(docName, ydoc)
   },
   writeState: async (docName, ydoc) => {
-    return true
+    return persistence.writeState(docName, ydoc)
   },
 })
 
