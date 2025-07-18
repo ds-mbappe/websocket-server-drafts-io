@@ -192,12 +192,32 @@ function authenticate(token) {
 server.on('upgrade', (request, socket, head) => {
   try {
     console.log('[UPGRADE] WebSocket upgrade request received')
+    console.log('[UPGRADE] Request URL:', request.url)
+    console.log('[UPGRADE] Request headers:', request.headers)
+    
     const url = new URL(request.url, `http://${request.headers.host}`)
     const token = url.searchParams.get('token')
-    const docName = url.pathname.slice(1)
     
-    console.log('[UPGRADE] Document name:', docName)
+    // Extract document name from pathname - remove leading slash
+    let docName = url.pathname.slice(1)
+    
+    // Handle case where WebsocketProvider appends document name
+    // If URL is /docName/docName, take the first part
+    const pathParts = docName.split('/')
+    if (pathParts.length > 1 && pathParts[0] === pathParts[1]) {
+      docName = pathParts[0]
+    }
+    
+    console.log('[UPGRADE] Full URL:', url.toString())
+    console.log('[UPGRADE] Parsed document name:', docName)
     console.log('[UPGRADE] Token provided:', !!token)
+    console.log('[UPGRADE] Token preview:', token ? token.substring(0, 50) + '...' : 'None')
+    
+    if (!token) {
+      console.log('[UPGRADE] No token provided, destroying socket')
+      socket.destroy()
+      return
+    }
     
     const user = authenticate(token)
     
