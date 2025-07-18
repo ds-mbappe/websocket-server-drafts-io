@@ -19,7 +19,7 @@ const wss = new WebSocketServer({ noServer: true })
 
 // Redis persistence setup
 const redis = new Redis(process.env.REDIS_URL)
-const persistence = new RedisPersistence(redis)
+const persistence = new RedisPersistence({ redis })
 
 setPersistence({
   bindState: async (docName, ydoc) => {
