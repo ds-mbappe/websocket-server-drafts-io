@@ -319,14 +319,24 @@ server.on('upgrade', (request, socket, head) => {
     // Extract document name from pathname - remove leading slash
     let docName = url.pathname.slice(1)
     
-    // Handle case where WebsocketProvider might append document name
+    // Handle case where WebsocketProvider appends document name
     const pathParts = docName.split('/')
     if (pathParts.length > 1) {
       docName = pathParts[0]
     }
     
+    // Remove any trailing slashes or empty parts
+    docName = docName.replace(/\/$/, '')
+    
+    console.log('[UPGRADE] Full URL object:', {
+      href: url.href,
+      pathname: url.pathname,
+      search: url.search,
+      searchParams: Object.fromEntries(url.searchParams)
+    })
     console.log('[UPGRADE] Parsed document name:', docName)
     console.log('[UPGRADE] Token provided:', !!token)
+    console.log('[UPGRADE] Token preview:', token ? token.substring(0, 30) + '...' : 'None')
     
     if (!docName) {
       console.log('[UPGRADE] No document name provided, destroying socket')
