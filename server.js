@@ -1,5 +1,5 @@
 // server/server.js
-import * as Y from 'yjs'
+import Redis from 'ioredis'
 import * as http from 'http'
 import dotenv from 'dotenv'
 import jwt from 'jsonwebtoken'
@@ -18,17 +18,11 @@ const server = http.createServer()
 const wss = new WebSocketServer({ noServer: true })
 
 // Redis persistence setup
-const persistence = new RedisPersistence(process.env.REDIS_URL)
+const redis = new Redis(process.env.REDIS_URL)
+const persistence = new RedisPersistence(redis)
 
 setPersistence({
   bindState: async (docName, ydoc) => {
-    // const persistedUpdate = await persistence.getUpdate(docName)
-    // const update = Y.encodeStateAsUpdate(persisted)
-    // Y.applyUpdate(ydoc, update)
-
-    // ydoc.on('update', async update => {
-    //   await persistence.storeUpdate(docName, update)
-    // })
     return persistence.bindState(docName, ydoc)
   },
   writeState: async (docName, ydoc) => {
