@@ -22,12 +22,6 @@ process.on('unhandledRejection', (error) => {
   process.exit(1)
 })
 
-console.log('[BOOT] Starting server...')
-console.log('[BOOT] REDIS_URL:', process.env.REDIS_URL)
-console.log('[BOOT] AUTH_SECRET:', process.env.AUTH_SECRET ? 'Set' : 'Not set')
-console.log('[BOOT] NODE_ENV:', process.env.NODE_ENV)
-console.log('[BOOT] PORT:', process.env.PORT)
-
 const port = process.env.PORT || 1234
 const server = http.createServer((req, res) => {
   // Handle HTTP requests for health checks
@@ -300,7 +294,7 @@ function authenticate(token) {
       return null
     }
     const decoded = jwt.verify(token, process.env.AUTH_SECRET)
-    console.log('[AUTH] Token verified for:', decoded.email)
+    console.log('[AUTH] Token verified')
     return decoded
   } catch (error) {
     console.log('[AUTH] Token verification failed:', error.message)
@@ -310,9 +304,6 @@ function authenticate(token) {
 
 server.on('upgrade', (request, socket, head) => {
   try {
-    console.log('[UPGRADE] WebSocket upgrade request received')
-    console.log('[UPGRADE] Request URL:', request.url)
-    
     const url = new URL(request.url, `http://${request.headers.host}`)
     const token = url.searchParams.get('token')
     
@@ -327,16 +318,6 @@ server.on('upgrade', (request, socket, head) => {
     
     // Remove any trailing slashes or empty parts
     docName = docName.replace(/\/$/, '')
-    
-    console.log('[UPGRADE] Full URL object:', {
-      href: url.href,
-      pathname: url.pathname,
-      search: url.search,
-      searchParams: Object.fromEntries(url.searchParams)
-    })
-    console.log('[UPGRADE] Parsed document name:', docName)
-    console.log('[UPGRADE] Token provided:', !!token)
-    console.log('[UPGRADE] Token preview:', token ? token.substring(0, 30) + '...' : 'None')
     
     if (!docName) {
       console.log('[UPGRADE] No document name provided, destroying socket')
