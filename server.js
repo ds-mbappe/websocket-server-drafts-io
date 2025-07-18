@@ -9,6 +9,10 @@ import { setupWSConnection, setPersistence } from './utils.js'
 
 dotenv.config()
 
+console.log('[BOOT] REDIS_URL:', process.env.REDIS_URL)
+console.log('[BOOT] AUTH_SECRET:', process.env.AUTH_SECRET)
+console.log('[BOOT] NODE_ENV:', process.env.NODE_ENV)
+
 const port = process.env.PORT || 1234
 const server = http.createServer()
 const wss = new WebSocketServer({ noServer: true })
